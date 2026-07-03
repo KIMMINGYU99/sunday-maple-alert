@@ -49,7 +49,7 @@ def find_sunday_maple_event(sunday_str):
 
 def get_event_image_url(event_url):
     html = fetch_html(event_url)
-    imgs = re.findall(r'https://lwi\.nexon\.com/maplestory/[^"'\>\s]+\.(?:png|jpg|jpeg)', html, re.IGNORECASE)
+    imgs = re.findall(r'https://lwi\.nexon\.com/maplestory/\S+?\.(?:png|jpg|jpeg)', html, re.IGNORECASE)
     board_imgs = [img for img in imgs if 'board' in img.lower()]
     return board_imgs[0] if board_imgs else (imgs[0] if imgs else None)
 
