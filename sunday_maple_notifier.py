@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import requests, json, os, re, sys, time, base64
+import requests, json, os, re, sys, time
 from datetime import datetime, timedelta
 import pytz
 
@@ -31,7 +31,7 @@ def find_sunday_maple_event(sunday_str):
         event_id, title = matches[0]
         event_url = f'https://maplestory.nexon.com/News/Event/{event_id}'
         log(f"목록에서 발견: {title.strip()} -> {event_url}")
-        return event_url, event_id
+        return event_url, title.strip()
     log("목록 직접 매칭 실패, 개별 이벤트 페이지 확인 중...")
     all_ids = list(dict.fromkeys(re.findall(r'href="/News/Event/(?:Ongoing/)?(\d+)"', html)))
     for event_id in all_ids[:20]:
@@ -40,50 +40,33 @@ def find_sunday_maple_event(sunday_str):
             detail_html = fetch_html(event_url)
             if sunday_str in detail_html and '썬데이' in detail_html and '메이플' in detail_html:
                 log(f"개별 페이지에서 발견: {event_url}")
-                return event_url, event_id
+                return event_url, '썬데이 메이플'
         except Exception as e:
             log(f"  {event_id} 확인 오류: {e}")
     return None, None
 
-def get_event_image_url(event_url):
+def get_event_detail(event_url):
     html = fetch_html(event_url)
+    title = None
+    og_title = re.search(r'<meta[^>]+property=["\'\']og:title["\'\'][^>]+content=["\'\']([^\"\'']+)["\'\']', html)
+    if og_title:
+        raw = og_title.group(1).strip()
+        raw = re.sub(r'\s*\|\s*메이플스토리.*$', '', raw).strip()
+        raw = re.sub(r'^.*?썬데이\s*메이플\s*[-–]\s*', '', raw).strip()
+        if raw:
+            title = raw
+    if not title:
+        page_title = re.search(r'<title>([^<]+)</title>', html)
+        if page_title:
+            raw = page_title.group(1).strip()
+            raw = re.sub(r'\s*\|\s*메이플스토리.*$', '', raw).strip()
+            raw = re.sub(r'^.*?썬데이\s*메이플\s*[-–]\s*', '', raw).strip()
+            if raw:
+                title = raw
     imgs = re.findall(r'https://lwi\.nexon\.com/maplestory/\S+?\.(?:png|jpg|jpeg)', html, re.IGNORECASE)
     board_imgs = [img for img in imgs if 'board' in img.lower()]
-    return board_imgs[0] if board_imgs else (imgs[0] if imgs else None)
-
-def get_event_summary(image_url):
-    """Gemini Vision API로 이벤트 이미지 분석해서 핵심 혜택 요약 (무료 티어)"""
-    try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=os.environ['GEMINI_API_KEY'], http_options={'api_version': 'v1'})
-
-        # 이미지 다운로드
-        headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://maplestory.nexon.com/'}
-        resp = requests.get(image_url, headers=headers, timeout=20)
-        resp.raise_for_status()
-
-        # 확장자로 미디어 타입 결정
-        if image_url.lower().endswith('.jpg') or image_url.lower().endswith('.jpeg'):
-            mime_type = 'image/jpeg'
-        else:
-            mime_type = 'image/png'
-
-        response = client.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=[
-                types.Part.from_bytes(data=resp.content, mime_type=mime_type),
-                '이 메이플스토리 썬데이 메이플 이벤트 이미지의 핵심 혜택만 2~3줄 요약. 불렛포인트(•) 사용. 80자 이내.'
-            ],
-            config=types.GenerateContentConfig(max_output_tokens=150)
-        )
-        summary = response.text.strip()
-        log(f"이미지 분석 완료: {summary}")
-        return summary
-    except Exception as e:
-        log(f"이미지 분석 실패 (요약 생략): {e}")
-        return None
+    image_url = board_imgs[0] if board_imgs else (imgs[0] if imgs else None)
+    return title, image_url
 
 def get_kakao_access_token():
     data = {
@@ -116,14 +99,16 @@ def send_kakao_message(access_token, text):
         raise RuntimeError(f"카카오톡 메시지 전송 실패: {result}")
     log("카카오톡 전송 완료!")
 
-def build_message(sunday_str, event_url, summary=None):
-    sunday_short = sunday_str[5:]  # '07.05'
-    parts = [f"🍁 썬데이 메이플 ({sunday_short})"]
-    if summary:
-        parts.append(summary)
-    parts.append(f"링크: {event_url}")
-    msg = "\n".join(parts)
-    return msg[:200] if len(msg) > 200 else msg
+def build_message(sunday_str, title, event_url, image_url):
+    sunday_short = sunday_str[5:]
+    parts = [
+        f"🍁 썬데이 메이플 ({sunday_short})",
+        f"📌 {title}",
+        f"🖼 이미지: {image_url}" if image_url else "",
+        f"🔗 공지: {event_url}",
+    ]
+    msg = "\n".join(p for p in parts if p)
+    return msg[:400] if len(msg) > 400 else msg
 
 def main():
     sunday_str = get_this_sunday_str()
@@ -131,20 +116,17 @@ def main():
     for attempt in range(1, MAX_RETRIES + 1):
         log(f"시도 {attempt}/{MAX_RETRIES} - {datetime.now(KST).strftime('%H:%M')}")
         try:
-            event_url, event_id = find_sunday_maple_event(sunday_str)
+            event_url, title = find_sunday_maple_event(sunday_str)
         except Exception as e:
             log(f"오류: {e}")
             event_url = None
         if event_url:
             log(f"이벤트 발견! {event_url}")
-            image_url = get_event_image_url(event_url)
-
-            # Gemini Vision으로 이미지 요약
-            summary = None
-            if image_url and os.environ.get('GEMINI_API_KEY'):
-                summary = get_event_summary(image_url)
-
-            message = build_message(sunday_str, event_url, summary)
+            detail_title, image_url = get_event_detail(event_url)
+            event_title = detail_title if detail_title else title
+            log(f"이벤트 제목: {event_title}")
+            log(f"이미지 URL: {image_url}")
+            message = build_message(sunday_str, event_title, event_url, image_url)
             log(f"전송 메시지:\n{message}")
             access_token = get_kakao_access_token()
             send_kakao_message(access_token, message)
