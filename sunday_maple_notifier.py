@@ -54,9 +54,10 @@ def get_event_image_url(event_url):
 def get_event_summary(image_url):
     """Gemini Vision API로 이벤트 이미지 분석해서 핵심 혜택 요약 (무료 티어)"""
     try:
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
 
-        genai.configure(api_key=os.environ['GEMINI_API_KEY'])
+        client = genai.Client(api_key=os.environ['GEMINI_API_KEY'])
 
         # 이미지 다운로드
         headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://maplestory.nexon.com/'}
@@ -69,11 +70,13 @@ def get_event_summary(image_url):
         else:
             mime_type = 'image/png'
 
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        image_part = {'mime_type': mime_type, 'data': resp.content}
-        response = model.generate_content(
-            [image_part, '이 메이플스토리 썬데이 메이플 이벤트 이미지의 핵심 혜택만 2~3줄 요약. 불렛포인트(•) 사용. 80자 이내.'],
-            generation_config={'max_output_tokens': 150}
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=[
+                types.Part.from_bytes(data=resp.content, mime_type=mime_type),
+                '이 메이플스토리 썬데이 메이플 이벤트 이미지의 핵심 혜택만 2~3줄 요약. 불렛포인트(•) 사용. 80자 이내.'
+            ],
+            config=types.GenerateContentConfig(max_output_tokens=150)
         )
         summary = response.text.strip()
         log(f"이미지 분석 완료: {summary}")
