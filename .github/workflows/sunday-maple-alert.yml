@@ -20,7 +20,7 @@ jobs:
           python-version: '3.11'
 
       - name: 패키지 설치
-        run: pip install requests pytz google-generativeai
+        run: pip install requests pytz google-genai
 
       - name: 선데이 메이플 알림 실행
         env:
