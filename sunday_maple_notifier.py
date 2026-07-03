@@ -25,21 +25,17 @@ def fetch_html(url):
 
 def find_sunday_maple_event(sunday_str):
     html = fetch_html('https://maplestory.nexon.com/News/Event')
-
-    # 방법1: 목록에서 제목에 썬데이+메이플 포함된 링크 찾기 (Ongoing URL 포함)
-    pattern = r'href="(https://maplestory\.nexon\.com/News/Event/(?:Ongoing/)?(\d+))"[^>]*>([^<]*(?:썬데이[^<]*메이플|메이플[^<]*썬데이)[^<]*)<'
-    matches = re.findall(pattern, html, re.IGNORECASE)
+    # 방법1: <dt> 안의 제목에서 썬데이+메이플 찾기 (상대 경로 /News/Event/ID 포함)
+    pattern = r'<dt>\s*<a href="/News/Event/(?:Ongoing/)?(\d+)"[^>]*>([^<]*(?:썬데이[^<]*메이플|메이플[^<]*썬데이)[^<]*)</a>'
+    matches = re.findall(pattern, html, re.IGNORECASE | re.DOTALL)
     if matches:
-        event_url_raw, event_id, title = matches[0]
-        clean_url = f'https://maplestory.nexon.com/News/Event/{event_id}'
-        log(f"목록에서 발견: {title.strip()} -> {clean_url}")
-        return clean_url, event_id
-
-    # 방법2: 모든 이벤트 링크 수집 후 개별 페이지에서 일요일 날짜+썬데이메이플 확인
+        event_id, title = matches[0]
+        event_url = f'https://maplestory.nexon.com/News/Event/{event_id}'
+        log(f"목록에서 발견: {title.strip()} -> {event_url}")
+        return event_url, event_id
+    # 방법2: 모든 이벤트 ID 수집 후 개별 페이지 확인
     log("목록 직접 매칭 실패, 개별 이벤트 페이지 확인 중...")
-    all_ids = list(dict.fromkeys(
-        re.findall(r'href="https://maplestory\.nexon\.com/News/Event/(?:Ongoing/)?(\d+)"', html)
-    ))
+    all_ids = list(dict.fromkeys(re.findall(r'href="/News/Event/(?:Ongoing/)?(\d+)"', html)))
     for event_id in all_ids[:20]:
         event_url = f'https://maplestory.nexon.com/News/Event/{event_id}'
         try:
@@ -53,7 +49,7 @@ def find_sunday_maple_event(sunday_str):
 
 def get_event_image_url(event_url):
     html = fetch_html(event_url)
-    imgs = re.findall(r'https://lwi\.nexon\.com/maplestory/[^"\'>\s]+\.(?:png|jpg|jpeg)', html, re.IGNORECASE)
+    imgs = re.findall(r'https://lwi\.nexon\.com/maplestory/[^"'\>\s]+\.(?:png|jpg|jpeg)', html, re.IGNORECASE)
     board_imgs = [img for img in imgs if 'board' in img.lower()]
     return board_imgs[0] if board_imgs else (imgs[0] if imgs else None)
 
