@@ -7,6 +7,9 @@ KST = pytz.timezone('Asia/Seoul')
 RETRY_INTERVAL_SEC = 2 * 60 * 60  # 2시간
 MAX_RETRIES = 8                     # 최대 8회 (16시간)
 
+def log(msg):
+    print(msg, flush=True)
+
 def get_this_sunday_str():
     now = datetime.now(KST)
     days_until_sunday = (6 - now.weekday()) % 7
@@ -22,23 +25,36 @@ def fetch_html(url):
 
 def find_sunday_maple_event(sunday_str):
     html = fetch_html('https://maplestory.nexon.com/News/Event')
-    blocks = re.findall(
-        r'href="(https://maplestory\.nexon\.com/News/Event/(\d+))".*?썬데이\s*메이플.*?(\d{4}\.\d{2}\.\d{2})',
-        html, re.DOTALL)
-    for event_url, event_id, date_str in blocks:
-        if date_str == sunday_str:
-            return event_url, event_id
-    recent = re.findall(r'href="(https://maplestory\.nexon\.com/News/Event/(\d+))".*?썬데이\s*메이플', html, re.DOTALL)
-    if recent:
-        event_url, event_id = recent[0]
-        if sunday_str in fetch_html(event_url):
-            return event_url, event_id
+
+    # 방법1: 목록에서 제목에 썬데이+메이플 포함된 링크 찾기 (Ongoing URL 포함)
+    pattern = r'href="(https://maplestory\.nexon\.com/News/Event/(?:Ongoing/)?(\d+))"[^>]*>([^<]*(?:썬데이[^<]*메이플|메이플[^<]*썬데이)[^<]*)<'
+    matches = re.findall(pattern, html, re.IGNORECASE)
+    if matches:
+        event_url_raw, event_id, title = matches[0]
+        clean_url = f'https://maplestory.nexon.com/News/Event/{event_id}'
+        log(f"목록에서 발견: {title.strip()} -> {clean_url}")
+        return clean_url, event_id
+
+    # 방법2: 모든 이벤트 링크 수집 후 개별 페이지에서 일요일 날짜+썬데이메이플 확인
+    log("목록 직접 매칭 실패, 개별 이벤트 페이지 확인 중...")
+    all_ids = list(dict.fromkeys(
+        re.findall(r'href="https://maplestory\.nexon\.com/News/Event/(?:Ongoing/)?(\d+)"', html)
+    ))
+    for event_id in all_ids[:20]:
+        event_url = f'https://maplestory.nexon.com/News/Event/{event_id}'
+        try:
+            detail_html = fetch_html(event_url)
+            if sunday_str in detail_html and '썬데이' in detail_html and '메이플' in detail_html:
+                log(f"개별 페이지에서 발견: {event_url}")
+                return event_url, event_id
+        except Exception as e:
+            log(f"  {event_id} 확인 오류: {e}")
     return None, None
 
 def get_event_image_url(event_url):
     html = fetch_html(event_url)
-    imgs = re.findall(r'https://lwi\.nexon\.com/maplestory/[^"\'>\s]+\.png', html)
-    board_imgs = [img for img in imgs if 'board' in img]
+    imgs = re.findall(r'https://lwi\.nexon\.com/maplestory/[^"\'>\s]+\.(?:png|jpg|jpeg)', html, re.IGNORECASE)
+    board_imgs = [img for img in imgs if 'board' in img.lower()]
     return board_imgs[0] if board_imgs else (imgs[0] if imgs else None)
 
 def get_kakao_access_token():
@@ -70,40 +86,40 @@ def send_kakao_message(access_token, text):
     result = resp.json()
     if result.get('result_code') != 0:
         raise RuntimeError(f"카카오톡 메시지 전송 실패: {result}")
-    print("카카오톡 전송 완료!")
+    log("카카오톡 전송 완료!")
 
 def build_message(sunday_str, event_url, image_url):
     sunday_short = sunday_str[5:]
-    parts = [f"선데이 메이플 ({sunday_short})"]
+    parts = [f"썬데이 메이플 ({sunday_short})"]
     if image_url:
-        parts.append(f"\n이미지: {image_url}")
-    parts.append(f"\n링크: {event_url}")
+        parts.append(f"이미지: {image_url}")
+    parts.append(f"링크: {event_url}")
     msg = "\n".join(parts)
     return msg[:200] if len(msg) > 200 else msg
 
 def main():
     sunday_str = get_this_sunday_str()
-    print(f"이번 주 일요일: {sunday_str}")
+    log(f"이번 주 일요일: {sunday_str}")
     for attempt in range(1, MAX_RETRIES + 1):
-        print(f"\n시도 {attempt}/{MAX_RETRIES} - {datetime.now(KST).strftime('%H:%M')}")
+        log(f"시도 {attempt}/{MAX_RETRIES} - {datetime.now(KST).strftime('%H:%M')}")
         try:
             event_url, event_id = find_sunday_maple_event(sunday_str)
         except Exception as e:
-            print(f"오류: {e}")
+            log(f"오류: {e}")
             event_url = None
         if event_url:
-            print(f"이벤트 발견! {event_url}")
+            log(f"이벤트 발견! {event_url}")
             image_url = get_event_image_url(event_url)
             message = build_message(sunday_str, event_url, image_url)
-            print(f"\n전송 메시지:\n{message}\n")
+            log(f"전송 메시지: {message}")
             access_token = get_kakao_access_token()
             send_kakao_message(access_token, message)
             return
-        print("아직 선데이 메이플 정보가 없습니다.")
+        log("아직 썬데이 메이플 정보가 없습니다.")
         if attempt < MAX_RETRIES:
-            print(f"{RETRY_INTERVAL_SEC // 3600}시간 후 재시도...")
+            log(f"{RETRY_INTERVAL_SEC // 3600}시간 후 재시도...")
             time.sleep(RETRY_INTERVAL_SEC)
-    print("최대 재시도 초과.")
+    log("최대 재시도 초과.")
     sys.exit(1)
 
 if __name__ == '__main__':
