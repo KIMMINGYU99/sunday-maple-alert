@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-import requests, json, os, re, sys, time
+import requests, json, os, re, sys, time, base64
 from datetime import datetime, timedelta
 import pytz
 
 KST = pytz.timezone('Asia/Seoul')
-RETRY_INTERVAL_SEC = 2 * 60 * 60  # 2시간
-MAX_RETRIES = 8                     # 최대 8회 (16시간)
+RETRY_INTERVAL_SEC = 2 * 60 * 60
+MAX_RETRIES = 8
 
 def log(msg):
     print(msg, flush=True)
@@ -25,7 +25,6 @@ def fetch_html(url):
 
 def find_sunday_maple_event(sunday_str):
     html = fetch_html('https://maplestory.nexon.com/News/Event')
-    # 방법1: <dt> 안의 제목에서 썬데이+메이플 찾기 (상대 경로 /News/Event/ID 포함)
     pattern = r'<dt>\s*<a href="/News/Event/(?:Ongoing/)?(\d+)"[^>]*>([^<]*(?:썬데이[^<]*메이플|메이플[^<]*썬데이)[^<]*)</a>'
     matches = re.findall(pattern, html, re.IGNORECASE | re.DOTALL)
     if matches:
@@ -33,7 +32,6 @@ def find_sunday_maple_event(sunday_str):
         event_url = f'https://maplestory.nexon.com/News/Event/{event_id}'
         log(f"목록에서 발견: {title.strip()} -> {event_url}")
         return event_url, event_id
-    # 방법2: 모든 이벤트 ID 수집 후 개별 페이지 확인
     log("목록 직접 매칭 실패, 개별 이벤트 페이지 확인 중...")
     all_ids = list(dict.fromkeys(re.findall(r'href="/News/Event/(?:Ongoing/)?(\d+)"', html)))
     for event_id in all_ids[:20]:
@@ -53,12 +51,35 @@ def get_event_image_url(event_url):
     board_imgs = [img for img in imgs if 'board' in img.lower()]
     return board_imgs[0] if board_imgs else (imgs[0] if imgs else None)
 
+def get_event_summary(image_url):
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+        headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://maplestory.nexon.com/'}
+        resp = requests.get(image_url, headers=headers, timeout=20)
+        resp.raise_for_status()
+        image_data = base64.standard_b64encode(resp.content).decode('utf-8')
+        media_type = 'image/jpeg' if image_url.lower().endswith(('.jpg', '.jpeg')) else 'image/png'
+        message = client.messages.create(
+            model='claude-haiku-4-5-20251001',
+            max_tokens=150,
+            messages=[{
+                'role': 'user',
+                'content': [
+                    {'type': 'image', 'source': {'type': 'base64', 'media_type': media_type, 'data': image_data}},
+                    {'type': 'text', 'text': '이 메이플스토리 썬데이 메이플 이벤트 이미지의 핵심 혜택만 2~3줄 요약. 불렛포인트(•) 사용. 80자 이내.'}
+                ],
+            }],
+        )
+        summary = message.content[0].text.strip()
+        log(f"이미지 분석 완료: {summary}")
+        return summary
+    except Exception as e:
+        log(f"이미지 분석 실패 (요약 생략): {e}")
+        return None
+
 def get_kakao_access_token():
-    data = {
-        'grant_type': 'refresh_token',
-        'client_id': os.environ['KAKAO_REST_API_KEY'],
-        'refresh_token': os.environ['KAKAO_REFRESH_TOKEN'],
-    }
+    data = {'grant_type': 'refresh_token', 'client_id': os.environ['KAKAO_REST_API_KEY'], 'refresh_token': os.environ['KAKAO_REFRESH_TOKEN']}
     if os.environ.get('KAKAO_CLIENT_SECRET'):
         data['client_secret'] = os.environ['KAKAO_CLIENT_SECRET']
     resp = requests.post('https://kauth.kakao.com/oauth/token', data=data, timeout=10)
@@ -68,12 +89,7 @@ def get_kakao_access_token():
     return result['access_token']
 
 def send_kakao_message(access_token, text):
-    template = {
-        "object_type": "text",
-        "text": text,
-        "link": {"web_url": "https://maplestory.nexon.com/News/Event",
-                 "mobile_web_url": "https://maplestory.nexon.com/News/Event"}
-    }
+    template = {"object_type": "text", "text": text, "link": {"web_url": "https://maplestory.nexon.com/News/Event", "mobile_web_url": "https://maplestory.nexon.com/News/Event"}}
     resp = requests.post(
         'https://kapi.kakao.com/v2/api/talk/memo/default/send',
         headers={'Authorization': f'Bearer {access_token}', 'Content-Type': 'application/x-www-form-urlencoded'},
@@ -84,11 +100,11 @@ def send_kakao_message(access_token, text):
         raise RuntimeError(f"카카오톡 메시지 전송 실패: {result}")
     log("카카오톡 전송 완료!")
 
-def build_message(sunday_str, event_url, image_url):
+def build_message(sunday_str, event_url, summary=None):
     sunday_short = sunday_str[5:]
-    parts = [f"썬데이 메이플 ({sunday_short})"]
-    if image_url:
-        parts.append(f"이미지: {image_url}")
+    parts = [f"🍁 썬데이 메이플 ({sunday_short})"]
+    if summary:
+        parts.append(summary)
     parts.append(f"링크: {event_url}")
     msg = "\n".join(parts)
     return msg[:200] if len(msg) > 200 else msg
@@ -106,8 +122,11 @@ def main():
         if event_url:
             log(f"이벤트 발견! {event_url}")
             image_url = get_event_image_url(event_url)
-            message = build_message(sunday_str, event_url, image_url)
-            log(f"전송 메시지: {message}")
+            summary = None
+            if image_url and os.environ.get('ANTHROPIC_API_KEY'):
+                summary = get_event_summary(image_url)
+            message = build_message(sunday_str, event_url, summary)
+            log(f"전송 메시지:\n{message}")
             access_token = get_kakao_access_token()
             send_kakao_message(access_token, message)
             return
