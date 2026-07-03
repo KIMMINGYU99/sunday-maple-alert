@@ -48,7 +48,9 @@ def find_sunday_maple_event(sunday_str):
 def get_event_detail(event_url):
     html = fetch_html(event_url)
     title = None
-    og_title = re.search(r'<meta[^>]+property=["\'\']og:title["\'\'][^>]+content=["\'\']([^\"\'']+)["\'\']', html)
+    og_title = re.search(r'<meta[^>]+property="og:title"[^>]+content="([^"]+)"', html)
+    if not og_title:
+        og_title = re.search(r'<meta[^>]+content="([^"]+)"[^>]+property="og:title"', html)
     if og_title:
         raw = og_title.group(1).strip()
         raw = re.sub(r'\s*\|\s*메이플스토리.*$', '', raw).strip()
