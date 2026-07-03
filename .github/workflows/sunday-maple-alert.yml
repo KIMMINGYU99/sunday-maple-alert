@@ -1,0 +1,27 @@
+name: Sunday Maple KakaoTalk Alert
+
+on:
+  schedule:
+    - cron: '0 0 * * 5'  # 금요일 오전 9시 KST (= UTC 00:00)
+  workflow_dispatch:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1000  # 최대 16시간 (2시간 * 8회)
+
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 패키지 설치
+        run: pip install requests pytz
+      - name: 선데이 메이플 알림 실행
+        env:
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
+          KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
+        run: python sunday_maple_notifier.py
