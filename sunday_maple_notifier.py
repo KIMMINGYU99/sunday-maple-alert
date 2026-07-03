@@ -57,7 +57,7 @@ def get_event_summary(image_url):
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=os.environ['GEMINI_API_KEY'])
+        client = genai.Client(api_key=os.environ['GEMINI_API_KEY'], http_options={'api_version': 'v1'})
 
         # 이미지 다운로드
         headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://maplestory.nexon.com/'}
