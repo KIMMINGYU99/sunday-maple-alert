@@ -20,13 +20,13 @@ jobs:
           python-version: '3.11'
 
       - name: 패키지 설치
-        run: pip install requests pytz anthropic
+        run: pip install requests pytz google-generativeai
 
       - name: 선데이 메이플 알림 실행
         env:
           KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
           KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
           KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PYTHONUNBUFFERED: '1'
         run: python sunday_maple_notifier.py
