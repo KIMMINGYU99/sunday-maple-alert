@@ -4,8 +4,8 @@ from datetime import datetime, timedelta
 import pytz
 
 KST = pytz.timezone('Asia/Seoul')
-RETRY_INTERVAL_SEC = 2 * 60 * 60
-MAX_RETRIES = 8
+RETRY_INTERVAL_SEC = 2 * 60 * 60  # 2시간
+MAX_RETRIES = 8                     # 최대 8회 (16시간)
 
 def log(msg):
     print(msg, flush=True)
@@ -52,26 +52,30 @@ def get_event_image_url(event_url):
     return board_imgs[0] if board_imgs else (imgs[0] if imgs else None)
 
 def get_event_summary(image_url):
+    """Gemini Vision API로 이벤트 이미지 분석해서 핵심 혜택 요약 (무료 티어)"""
     try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+        import google.generativeai as genai
+
+        genai.configure(api_key=os.environ['GEMINI_API_KEY'])
+
+        # 이미지 다운로드
         headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://maplestory.nexon.com/'}
         resp = requests.get(image_url, headers=headers, timeout=20)
         resp.raise_for_status()
-        image_data = base64.standard_b64encode(resp.content).decode('utf-8')
-        media_type = 'image/jpeg' if image_url.lower().endswith(('.jpg', '.jpeg')) else 'image/png'
-        message = client.messages.create(
-            model='claude-haiku-4-5-20251001',
-            max_tokens=150,
-            messages=[{
-                'role': 'user',
-                'content': [
-                    {'type': 'image', 'source': {'type': 'base64', 'media_type': media_type, 'data': image_data}},
-                    {'type': 'text', 'text': '이 메이플스토리 썬데이 메이플 이벤트 이미지의 핵심 혜택만 2~3줄 요약. 불렛포인트(•) 사용. 80자 이내.'}
-                ],
-            }],
+
+        # 확장자로 미디어 타입 결정
+        if image_url.lower().endswith('.jpg') or image_url.lower().endswith('.jpeg'):
+            mime_type = 'image/jpeg'
+        else:
+            mime_type = 'image/png'
+
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        image_part = {'mime_type': mime_type, 'data': resp.content}
+        response = model.generate_content(
+            [image_part, '이 메이플스토리 썬데이 메이플 이벤트 이미지의 핵심 혜택만 2~3줄 요약. 불렛포인트(•) 사용. 80자 이내.'],
+            generation_config={'max_output_tokens': 150}
         )
-        summary = message.content[0].text.strip()
+        summary = response.text.strip()
         log(f"이미지 분석 완료: {summary}")
         return summary
     except Exception as e:
@@ -79,7 +83,11 @@ def get_event_summary(image_url):
         return None
 
 def get_kakao_access_token():
-    data = {'grant_type': 'refresh_token', 'client_id': os.environ['KAKAO_REST_API_KEY'], 'refresh_token': os.environ['KAKAO_REFRESH_TOKEN']}
+    data = {
+        'grant_type': 'refresh_token',
+        'client_id': os.environ['KAKAO_REST_API_KEY'],
+        'refresh_token': os.environ['KAKAO_REFRESH_TOKEN'],
+    }
     if os.environ.get('KAKAO_CLIENT_SECRET'):
         data['client_secret'] = os.environ['KAKAO_CLIENT_SECRET']
     resp = requests.post('https://kauth.kakao.com/oauth/token', data=data, timeout=10)
@@ -89,7 +97,12 @@ def get_kakao_access_token():
     return result['access_token']
 
 def send_kakao_message(access_token, text):
-    template = {"object_type": "text", "text": text, "link": {"web_url": "https://maplestory.nexon.com/News/Event", "mobile_web_url": "https://maplestory.nexon.com/News/Event"}}
+    template = {
+        "object_type": "text",
+        "text": text,
+        "link": {"web_url": "https://maplestory.nexon.com/News/Event",
+                 "mobile_web_url": "https://maplestory.nexon.com/News/Event"}
+    }
     resp = requests.post(
         'https://kapi.kakao.com/v2/api/talk/memo/default/send',
         headers={'Authorization': f'Bearer {access_token}', 'Content-Type': 'application/x-www-form-urlencoded'},
@@ -101,7 +114,7 @@ def send_kakao_message(access_token, text):
     log("카카오톡 전송 완료!")
 
 def build_message(sunday_str, event_url, summary=None):
-    sunday_short = sunday_str[5:]
+    sunday_short = sunday_str[5:]  # '07.05'
     parts = [f"🍁 썬데이 메이플 ({sunday_short})"]
     if summary:
         parts.append(summary)
@@ -122,9 +135,12 @@ def main():
         if event_url:
             log(f"이벤트 발견! {event_url}")
             image_url = get_event_image_url(event_url)
+
+            # Gemini Vision으로 이미지 요약
             summary = None
-            if image_url and os.environ.get('ANTHROPIC_API_KEY'):
+            if image_url and os.environ.get('GEMINI_API_KEY'):
                 summary = get_event_summary(image_url)
+
             message = build_message(sunday_str, event_url, summary)
             log(f"전송 메시지:\n{message}")
             access_token = get_kakao_access_token()
