@@ -119,12 +119,12 @@ def send_kakao_message(access_token, text):
 def build_message(sunday_str, title, event_url, image_url):
     sunday_short = sunday_str[5:]
     parts = [
-        f"ð ì¬ë°ì´ ë©ì´í ({sunday_short})",
-        f"ð {title}",
-        f"ð¼ ì´ë¯¸ì§: {image_url}" if image_url else "",
-        f"ð ê³µì§: {event_url}",
+        f"📌 {title or '썬데이 메이플'}",
+        f"📅 날짜: {sunday_short} (일)",
+        f"🖼 이미지: {image_url or '(이미지 없음)'}",
+        f"🔗 공지: {event_url}",
     ]
-    msg = "\n".join(p for p in parts if p)
+    msg = "\n".join(parts)
     return msg[:400] if len(msg) > 400 else msg
 
 def main():
